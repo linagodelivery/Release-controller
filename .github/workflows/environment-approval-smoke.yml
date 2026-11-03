@@ -1,0 +1,16 @@
+name: Environment approval smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  courier-sign-approval:
+    name: Verify courier-sign approval gate
+    runs-on: ubuntu-latest
+    environment: courier-sign
+    steps:
+      - name: Confirm environment approval was granted
+        run: echo "LINAGO_ENVIRONMENT_APPROVAL_SMOKE_PASSED"
