@@ -11,7 +11,7 @@ Do not open a public issue containing credentials, private source, customer data
 - Keep application source copied from `linagodelivery/Delivery` out of this repository.
 - Never commit JKS/PKCS12 files, passwords, service-account JSON keys, access tokens, or production configuration secrets.
 - Do not add credentialed workflows until main-branch and environment protections have been read back and verified.
-- Require CODEOWNERS review for `.github/**` and release scripts, enforced by a protected `main`.
+- Keep CODEOWNERS for `.github/**` and release scripts. As of the M1.3 preflight, the active `main` ruleset requires PRs but has zero required approvals and does **not** enforce CODEOWNERS review; the file alone is not a review gate. Re-read the ruleset before adding any credentials.
 - Pin third-party Actions to reviewed full commit SHAs.
 - Use least-privilege, short-lived WIF credentials; do not create service-account keys.
 - Separate build, signing, and publishing jobs and identities.

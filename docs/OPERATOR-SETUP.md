@@ -2,39 +2,39 @@
 
 These are required settings, not settings already verified or applied.
 
-## 1. Protect `main`
+## 1. Verified GitHub state and remaining checks
 
-In repository settings, create a ruleset targeting the default branch `main`:
+The public repository is `linagodelivery/Release-controller`, ID `1444309964`, owner ID `266306313`, default branch `main`. Its active ruleset targets `refs/heads/main`, requires PRs, blocks force-push/non-fast-forward and deletion, and has no bypass actors. Required PR approvals are currently `0`; CODEOWNERS enforcement is off. This supports a solo operator but provides no independent review. The Actions permission endpoint and environment list could not be read through the available connector. The courier-sign environment gate did wait for operator approval in run [41698194418](https://github.com/linagodelivery/Release-controller/actions/runs/41698194418); verify the other four environments in GitHub Settings before using them.
 
-- Require pull requests before merging.
-- Require at least one approval and required CODEOWNERS review.
-- Dismiss stale approvals after new commits.
-- Block force-push and branch deletion.
-- Do not grant bypass to administrators or other actors.
-- Ensure only trusted maintainers can edit repository rules and Actions policy.
+Keep Actions workflow permissions at the minimum. Each credentialed job must set its own permissions explicitly; the Courier WIF smoke job requests only `contents: read` and `id-token: write`. Continue to pin every Action to a reviewed full commit SHA.
 
-Read back the ruleset and confirm its target, rules, bypass list, and enforcement state.
+## 2. WIF proposal (not yet applied)
 
-## 2. Restrict Actions
+Project: `deliveryapp-2b7a4` / `581390628800`.
 
-Set repository Actions default `GITHUB_TOKEN` permissions to read-only contents. Do not enable workflows that retrieve signing or publishing credentials yet. Review allowed Actions and require full-SHA pinning in workflow review/policy.
+- Pool: `github-release-pool`.
+- Provider: `github-delivery`, issuer `https://token.actions.githubusercontent.com`.
+- Exact provider admission: repository ID `1444309964`, owner ID `266306313`, repository name `linagodelivery/Release-controller`, `refs/heads/main`, `workflow_dispatch`, and the workflow/environment pairs in `RELEASE-ARCHITECTURE.md`.
+- Map an enum attribute `release_identity`; it must yield `courier-sign`, `shop-sign`, `marketplace-sign`, `courier-play`, or `shop-play` only for its exact workflow/environment pair and `unapproved` otherwise.
+- Each app/operation service account receives only a service-account-level `roles/iam.workloadIdentityUser` binding for its own `principalSet` enum value. Do not grant project roles, self Token Creator, Secret Manager access, Play permissions, Firebase permissions, or create keys in this milestone.
+- Required service accounts: `gha-courier-sign`, `gha-shop-sign`, `gha-marketplace-sign`, `gha-courier-play`, `gha-shop-play`.
+
+The exact CEL and IAM commands prepared for an approved change are in `WIF-SETUP.md`. They are examples for review and must not be run until the operator approves the complete mutation plan. The STS API is currently disabled and enabling it is part of that approval. Organization Policy metadata is unverified because the API is disabled and was not enabled for this audit.
 
 ## 3. Protect release environments
 
-Create separate environments for each app and purpose, for example:
+Expected environments:
 
-- `courier-sign`, `shop-sign`, `marketplace-sign`
-- `courier-play-draft`, `shop-play-draft`
+- Signing: `courier-sign`, `shop-sign`, `marketplace-sign`.
+- Play draft preparation: `courier-publish`, `shop-publish`.
 
-Configure required reviewers for each. Where a second reviewer is available, prevent self-review. Verify the environment rules are active on this public repository; the same settings are unavailable for private repositories on GitHub Free.
-
-Do not add signing secrets to GitHub environments. Future signing credentials should be in Secret Manager and available only to app-specific signing identities through WIF after M1.3 approval.
+No JKS, password, Play credential, service-account key, or other secret belongs in GitHub. Future signing credentials should be in Secret Manager and accessible only to app-specific signing identities after a separate approval. Publishing identities receive Play permissions later and never receive signing-secret access.
 
 ## 4. Private Delivery read access (future, not configured)
 
 Prefer a GitHub App installed only on `linagodelivery/Delivery`, with read-only Contents permission. Issue a short-lived installation token in the unprivileged build job and use it only to fetch the operator-selected immutable commit. Do not expose that token to build scripts, logs, artifacts, signing, or publishing jobs. Revoke/uninstall the app if the release controller is retired.
 
-Do not use a broad PAT. No GitHub App, private-source access, WIF, service account, Play permission, or cloud secret has been configured by M1.2.
+Do not use a broad PAT. No GitHub App or private-source access has been configured. M1.3 WIF resources and service accounts are still pending explicit operator approval. No Play permission, signing secret, or cloud secret access is included.
 
 ## 5. Before enabling any workflow
 
@@ -45,4 +45,4 @@ Read back and record:
 - Actions default permissions and allowed-action policy;
 - exact workflow paths and reviewed commit SHAs.
 
-If a required protection is inactive or cannot be enforced, stop before adding credentials or enabling credentialed workflows.
+If an environment's reviewer/branch restrictions or repository Actions policy cannot be verified, stop before granting that workflow impersonation. Because the sole operator can edit `main` and approve environment jobs, this design is not independent dual control; protect the GitHub account with MFA and limit write access.
