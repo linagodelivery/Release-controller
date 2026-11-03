@@ -11,6 +11,14 @@ The source of truth remains the private `linagodelivery/Delivery` repository. Th
 5. **Publication approval:** use a separate protected environment. The publishing identity cannot access signing secrets. Courier and Shop create non-live testing drafts only; an operator reviews and publishes the draft in Play Console.
 6. **Marketplace:** sign a verified APK. Hosting publication remains deferred and must use a separate promotion step and identity. Do not grant Firebase Hosting Admin to build or signing identities.
 
+Courier's current implementation proposal is documented in
+[`COURIER-SIGNING-PREFLIGHT.md`](COURIER-SIGNING-PREFLIGHT.md). The build runs
+inside the private Delivery repository and keeps its short-lived unsigned AAB
+there; the public controller downloads it only inside the protected
+`courier-sign` job. The present controller workflow is a no-signing dry run:
+it validates source/run/artifact identity, then verifies WIF. It does not read
+Secret Manager or sign an artifact.
+
 ## GitHub Free controls (read back 2026-11-03)
 
 The public `linagodelivery/Release-controller` repository (ID `1444309964`, organization ID `266306313`) has an active ruleset targeting `refs/heads/main`. It requires pull requests, blocks deletion and non-fast-forward updates, and has no bypass actors. The current ruleset has **zero required PR approvals** and does not enforce CODEOWNERS review. This matches the single-operator decision; it is not independent review. Repository Actions default permissions and the full configuration of four environments were not readable through the available GitHub API connection and remain unverified.

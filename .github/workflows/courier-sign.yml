@@ -1,43 +1,143 @@
-name: Courier signing identity check
+name: Courier signing boundary preflight
 
 on:
   workflow_dispatch:
+    inputs:
+      source_sha:
+        description: Full Delivery commit SHA built by the private candidate workflow
+        required: true
+        type: string
+      build_run_id:
+        description: Successful run ID from Courier unsigned release candidate in Delivery
+        required: true
+        type: string
+      build_run_attempt:
+        description: Successful attempt number reported by GitHub for the selected build run
+        required: true
+        type: string
 
 permissions: {}
 
+concurrency:
+  group: courier-sign-preflight
+  cancel-in-progress: false
+
 jobs:
-  verify-courier-sign-identity:
-    name: Verify Courier signing identity
-    runs-on: ubuntu-latest
+  signing-boundary-preflight:
+    name: Verify private Courier candidate and WIF boundary (no signing)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
     environment: courier-sign
     permissions:
       contents: read
       id-token: write
+    timeout-minutes: 30
     steps:
-      - name: Check out release-controller source
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Mint short-lived read-only Delivery artifact token
+        id: delivery-token
+        uses: actions/create-github-app-token@df432ceedc7162793a195dd1713ff69aefc7379e # v2.0.6
+        with:
+          app-id: ${{ secrets.DELIVERY_ARTIFACT_READER_APP_ID }}
+          private-key: ${{ secrets.DELIVERY_ARTIFACT_READER_PRIVATE_KEY }}
+          owner: linagodelivery
+          repositories: Delivery
+          permission-actions: read
+          permission-contents: read
 
-      - name: Authenticate with Google Cloud WIF
+      - name: Check out trusted release-controller verifier
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          path: release-controller
+
+      - name: Verify source lineage, build run, and artifact identity
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ steps.delivery-token.outputs.token }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          BUILD_RUN_ATTEMPT: ${{ inputs.build_run_attempt }}
+        run: |
+          set -euo pipefail
+          result="$(node release-controller/scripts/verify-courier-build-run.mjs "$SOURCE_SHA" "$BUILD_RUN_ID" "$BUILD_RUN_ATTEMPT")"
+          RESULT="$result" node --input-type=module -e 'import { appendFile } from "node:fs/promises"; const result = JSON.parse(process.env.RESULT); await appendFile(process.env.GITHUB_OUTPUT, `version_code=${result.versionCode}\nversion_name=${result.versionName}\nartifact_id=${result.artifactId}\nartifact_digest=${result.artifactDigest}\nbuild_run_head_sha=${result.runHeadSha}\nbuild_run_attempt=${result.runAttempt}\n`);'
+          echo 'Approved workflow definition, exact source/run identity, attempt, artifact record, package, and version verified.'
+
+      - name: Download only the verified private-run candidate
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          artifact-ids: ${{ steps.source.outputs.artifact_id }}
+          repository: linagodelivery/Delivery
+          run-id: ${{ inputs.build_run_id }}
+          github-token: ${{ steps.delivery-token.outputs.token }}
+          path: ${{ runner.temp }}/courier-candidate
+          digest-mismatch: error
+
+      - name: Install Java 21 for trusted bundle inspection
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Download and pin Bundletool
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundletool_version='1.18.3'
+          bundletool_sha256='a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29'
+          bundletool="$RUNNER_TEMP/bundletool-all-${bundletool_version}.jar"
+          curl --fail --location --silent --show-error \
+            "https://github.com/google/bundletool/releases/download/${bundletool_version}/bundletool-all-${bundletool_version}.jar" \
+            --output "$bundletool"
+          echo "${bundletool_sha256}  ${bundletool}" | sha256sum --check --status
+
+      - name: Validate unsigned AAB before requesting Google credentials
+        id: verify
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          BUILD_RUN_HEAD_SHA: ${{ steps.source.outputs.build_run_head_sha }}
+          BUILD_RUN_ATTEMPT: ${{ steps.source.outputs.build_run_attempt }}
+          EXPECTED_VERSION_CODE: ${{ steps.source.outputs.version_code }}
+          EXPECTED_VERSION_NAME: ${{ steps.source.outputs.version_name }}
+        run: |
+          set -euo pipefail
+          result="$(node release-controller/scripts/verify-courier-unsigned-candidate.mjs \
+            "$RUNNER_TEMP/courier-candidate" "$SOURCE_SHA" "$BUILD_RUN_ID" \
+            "$BUILD_RUN_HEAD_SHA" "$BUILD_RUN_ATTEMPT" \
+            "$EXPECTED_VERSION_CODE" "$EXPECTED_VERSION_NAME" \
+            "$RUNNER_TEMP/bundletool-all-1.18.3.jar")"
+          echo "$result" > "$RUNNER_TEMP/courier-candidate-verification.json"
+          echo 'Candidate digest, package, version, structure, unsigned state, and Bundletool validation passed.'
+
+      - name: Authenticate to the existing Courier WIF identity after validation
         id: auth
         uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3.0.0
         with:
           project_id: deliveryapp-2b7a4
           workload_identity_provider: projects/581390628800/locations/global/workloadIdentityPools/github-release-pool/providers/github-delivery
           service_account: gha-courier-sign@deliveryapp-2b7a4.iam.gserviceaccount.com
+          token_format: access_token
+          access_token_scopes: https://www.googleapis.com/auth/cloud-platform
           create_credentials_file: true
           cleanup_credentials: true
 
-      - name: Install pinned Google Cloud CLI action
+      - name: Verify the expected temporary Google identity
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3.0.1
         with:
           project_id: deliveryapp-2b7a4
-          version: latest
+          version: '515.0.0'
 
-      - name: Verify authenticated service account
+      - name: Complete signing-boundary dry run without retrieving secrets
         shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
         run: |
           set -euo pipefail
-          # Force credential exchange, but never print or persist the token.
           gcloud auth print-access-token >/dev/null
           actual="$(gcloud auth list --filter=status:ACTIVE --format='value(account)')"
           expected='gha-courier-sign@deliveryapp-2b7a4.iam.gserviceaccount.com'
@@ -45,4 +145,9 @@ jobs:
             echo 'Unexpected Google Cloud principal.' >&2
             exit 1
           fi
-          echo 'Courier WIF service-account identity verified.'
+          echo "Preflight passed for source ${SOURCE_SHA} and build run ${BUILD_RUN_ID}; no signing operation or Secret Manager read was performed."
+
+      - name: Remove candidate and temporary tool files
+        if: always()
+        shell: bash
+        run: rm -rf "$RUNNER_TEMP/courier-candidate" "$RUNNER_TEMP/courier-candidate-verification.json" "$RUNNER_TEMP/bundletool-all-1.18.3.jar"

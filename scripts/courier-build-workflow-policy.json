@@ -1,0 +1,6 @@
+{
+  "workflowPath": ".github/workflows/courier-unsigned-release-candidate.yml",
+  "approvedWorkflowSha256": "67cf78c2caec89db3fbf37240b0917322d67c0e1d284343720d87b3f1873a54e",
+  "sourcePolicy": "must-equal-workflow-run-head",
+  "applicationId": "com.linago.courier"
+}
