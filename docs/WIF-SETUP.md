@@ -1,14 +1,14 @@
 # Google Cloud WIF setup plan (M1.3)
 
-**Status: proposal only. No cloud resource or IAM mutation has been applied.**
+**Status: partially provisioned. The Courier WIF authentication workflow has not yet been dispatched; no authentication result is claimed.**
 
 ## Read-only preflight, 2026-11-03
 
 - Project: `deliveryapp-2b7a4`, number `581390628800`; active gcloud account was `naymichahid@gmail.com`.
 - GitHub controller: public `linagodelivery/Release-controller`, repository ID `1444309964`, owner ID `266306313`, default branch `main`.
-- No Workload Identity Pool or release service account was found.
-- `iam.googleapis.com`, `iamcredentials.googleapis.com`, and `secretmanager.googleapis.com` are enabled. `sts.googleapis.com` is **not enabled** and must be enabled before WIF authentication can work.
-- No release-named service accounts were found. Existing Firebase/admin/runtime accounts are not to be reused.
+- Initial preflight found no Workload Identity Pool or release service account.
+- `iam.googleapis.com`, `iamcredentials.googleapis.com`, `secretmanager.googleapis.com`, and now `sts.googleapis.com` are enabled in `deliveryapp-2b7a4`.
+- The pool/provider and five release service accounts listed below have now been created and read back.
 - Existing Secret Manager names were inspected as metadata only. No release signing secrets or payloads were read; no secret access is proposed in M1.3.
 - Project IAM contains existing application/runtime grants, but no GitHub federated principal. No project role will be granted to the five new release service accounts.
 - Organization Policy state is unverified: the API is disabled and was not enabled for this audit.
@@ -52,7 +52,26 @@ principalSet://iam.googleapis.com/projects/581390628800/locations/global/workloa
 
 `IDENTITY` is one exact enum from the table. Do not put several `principalSet` members in one binding expecting them to be ANDed: IAM members are alternatives. Keep each service account's one member distinct.
 
-## Exact proposed commands (do not run until separately approved)
+## Provisioning record
+
+The operator authorized M1.3-B provisioning. Current read-back:
+
+- Pool `github-release-pool`: present, global.
+- Provider `github-delivery`: `ACTIVE`, issuer `https://token.actions.githubusercontent.com`; mappings and condition read back exactly as specified above.
+- All five service accounts exist: `gha-courier-sign`, `gha-shop-sign`, `gha-marketplace-sign`, `gha-courier-play`, and `gha-shop-play`.
+- Only Courier currently has an impersonation binding, because `.github/workflows/courier-sign.yml` is the only implemented/reviewed identity workflow:
+
+  ```text
+  serviceAccount: gha-courier-sign@deliveryapp-2b7a4.iam.gserviceaccount.com
+  role: roles/iam.workloadIdentityUser
+  member: principalSet://iam.googleapis.com/projects/581390628800/locations/global/workloadIdentityPools/github-release-pool/attribute.release_identity/courier-sign
+  ```
+
+- The four future accounts have no WIF binding until their corresponding workflow files exist and are reviewed. The provider allowlist reserves their documented exact workflow/environment pairs, but no other workflow can map to those release-identity values.
+- No release account has a project-level role. No user-managed service-account keys were found. No existing Secret Manager policy references any of the five account emails. No secret access, Play, Firebase, Storage, or Hosting permissions were granted.
+- The Courier workflow has **not** completed a WIF run yet. The GitHub environment API and Actions permission settings are unavailable through the current connector; the prior environment smoke run demonstrated that `courier-sign` waited for manual approval.
+
+The initial reviewed setup commands follow. Do not rerun resource-creation commands against the existing resources. The actual effective configuration is the read-back above, not merely the command text.
 
 PowerShell commands below create only the approved pool, provider, five service accounts, and five service-account-level WIF User bindings. First re-run the read-only checks and stop if any named resource now exists; do not overwrite it.
 
@@ -62,7 +81,7 @@ $ProjectNumber = '581390628800'
 $Pool = 'github-release-pool'
 $Provider = 'github-delivery'
 
-# Required: currently disabled. Enabling is a project configuration mutation.
+# STS was enabled for this project as part of the approved setup.
 gcloud services enable sts.googleapis.com --project=$ProjectId
 
 gcloud iam workload-identity-pools create $Pool `
@@ -97,15 +116,15 @@ foreach ($Identity in $Identities) {
 }
 ```
 
-### Verification after approved creation
+### Verification and remaining auth gate
 
-Read back the pool/provider state, attribute mapping, condition, each service account IAM policy, and project IAM policy. Confirm there are no other members on the five WIF User bindings and no release service account has a project-level grant. Then dispatch only `courier-sign.yml` from `main`, approve the `courier-sign` environment as the operator, and confirm the workflow gets an access token without displaying it and reports only the expected service account email. Do not retrieve secrets or call Play/Firebase APIs. Negative tests must cover another workflow, wrong environment, feature branch, pull request, and another repository; failed exchange is expected. The GitHub connector currently cannot read Actions permission defaults or the environment list, so manually verify these in Settings before dispatching any new identity workflow.
+The pool/provider, mappings/condition, five account policies, keys, project IAM, and Secret Manager IAM were read back. Before another identity workflow is enabled, manually verify its environment reviewer and branch restrictions in GitHub Settings. For the existing Courier workflow, trigger it from `main`; approve its `courier-sign` deployment yourself, then verify the authenticated account name. Never display access tokens or credential-file contents. Do not retrieve secrets or call Play/Firebase APIs. Negative tests still required: another repository, non-main branch, pull request, unauthorized workflow/environment, and cross-account impersonation. The GitHub connector cannot dispatch workflows or read the environment/Actions settings APIs; the browser control host is unavailable in this session.
 
 ## Approval and residual security limits
 
 The smoke run proves that `courier-sign` waited at an environment gate. It does not prove independent approval: the solo operator can change `main` and approve the environment. The main ruleset currently requires a PR but has zero required approvals and CODEOWNERS review is disabled. WIF limits which workflow paths can request which service-account identity; it cannot establish that the workflow contents are benign. GitHub dependency/action compromise and a compromised operator account remain in scope.
 
-Before the approval gate for cloud mutations, read back all five environments' reviewer and `main` branch restrictions, Actions default permissions, and workflow files on `main`. If any intended environment does not enforce review, do not bind that release identity yet. No WIF resource should be created until the operator approves the exact command set above and acknowledges the single-operator risk.
+The sole operator can change `main` and approve environment jobs. This is not independent dual control. The main ruleset still has zero required PR approvals and CODEOWNERS enforcement is off. Keep the four future identities unbound until their workflows and environment settings are verified. The Courier auth workflow remains limited to read-only credential exchange and prints only the service account identity.
 
 ## Rollback (only after an approved setup)
 
