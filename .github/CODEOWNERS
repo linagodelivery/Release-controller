@@ -1,0 +1,5 @@
+# These owners are effective only when required CODEOWNERS review is enabled on protected main.
+* @chahid3
+/.github/ @chahid3
+/scripts/ @chahid3
+/docs/ @chahid3
