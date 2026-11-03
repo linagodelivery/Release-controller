@@ -85,9 +85,10 @@ certificate fingerprint. It must not invoke Gradle or app repository code.
 - The artifact API exposes the artifact ID/digest and run/repository/head-SHA
   association, but not a `run_attempt` field. The controller checks the
   requested attempt through both run and attempt API responses, requires one
-  unique matching artifact, downloads that immutable artifact ID, and checks
-  the build-generated manifest's attempt against the selected attempt. The
-  manifest is not treated as independent
+  unique matching artifact, requires its GitHub creation time to be at or after
+  the selected attempt's API-reported start, and downloads that immutable
+  artifact ID. The build-generated manifest's attempt is also compared with
+  the selected attempt but is not treated as independent
   provenance; conflicting or ambiguous artifacts are rejected. The pinned
   download action errors on its artifact digest mismatch check, and the
   controller separately verifies the AAB SHA-256.

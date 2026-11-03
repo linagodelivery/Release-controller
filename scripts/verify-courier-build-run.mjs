@@ -66,8 +66,11 @@ export function verifyBuildExecution({ run, attempt, workflow, workflowSha256, s
   const named = artifacts.filter((item) => item.name === artifactName);
   if (named.length !== 1) throw new Error('Expected exactly one candidate artifact with the source-bound name.');
   const artifact = named[0];
+  const attemptStartedAt = Date.parse(attempt.run_started_at ?? '');
+  const artifactCreatedAt = Date.parse(artifact.created_at ?? '');
   if (artifact.expired !== false || !Number.isSafeInteger(artifact.id) || artifact.id < 1 || !Number.isSafeInteger(artifact.size_in_bytes) || artifact.size_in_bytes < 1 ||
       !/^sha256:[0-9a-f]{64}$/.test(artifact.digest ?? '') ||
+      !Number.isFinite(attemptStartedAt) || !Number.isFinite(artifactCreatedAt) || artifactCreatedAt < attemptStartedAt ||
       Number(artifact.workflow_run?.id) !== Number(run.id) || artifact.workflow_run?.repository_id !== REPOSITORY_ID ||
       artifact.workflow_run?.head_repository_id !== REPOSITORY_ID || artifact.workflow_run?.head_branch !== 'main' ||
       artifact.workflow_run?.head_sha !== run.head_sha) {

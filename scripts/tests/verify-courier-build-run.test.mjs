@@ -25,7 +25,7 @@ function fixture(overrides = {}) {
     repository: { id: 1121364665, full_name: 'linagodelivery/Delivery' },
     head_repository: { id: 1121364665, full_name: 'linagodelivery/Delivery' },
   };
-  const attempt = { id: runId, run_attempt: attemptNumber, head_sha: sha, status: 'completed', conclusion: 'success' };
+  const attempt = { id: runId, run_attempt: attemptNumber, head_sha: sha, status: 'completed', conclusion: 'success', run_started_at: '2026-11-03T10:00:00Z' };
   const workflow = { id: workflowId, path: policy.workflowPath, state: 'active' };
   const artifact = {
     id: 55,
@@ -33,6 +33,7 @@ function fixture(overrides = {}) {
     expired: false,
     size_in_bytes: 1024,
     digest,
+    created_at: '2026-11-03T10:01:00Z',
     workflow_run: { id: runId, repository_id: 1121364665, head_repository_id: 1121364665, head_branch: 'main', head_sha: sha },
   };
   return {
@@ -99,6 +100,8 @@ test('rejects missing, ambiguous, expired, or digest-mismatched artifact provena
   assert.throws(() => verifyBuildExecution(fixture({ artifacts: [{ ...artifact, expired: true }] })), /artifact metadata/);
   assert.throws(() => verifyBuildExecution(fixture({ artifacts: [{ ...artifact, digest: 'not-a-digest' }] })), /artifact metadata/);
   assert.throws(() => verifyBuildExecution(fixture({ artifacts: [{ ...artifact, workflow_run: undefined }] })), /artifact metadata/);
+  assert.throws(() => verifyBuildExecution(fixture({ attempt: { run_started_at: undefined } })), /artifact metadata/);
+  assert.throws(() => verifyBuildExecution(fixture({ artifacts: [{ ...artifact, created_at: '2026-11-03T09:59:59Z' }] })), /artifact metadata/);
 });
 
 test('rejects non-manual, non-main and foreign repository runs', () => {
