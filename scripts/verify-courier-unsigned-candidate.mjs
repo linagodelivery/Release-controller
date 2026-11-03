@@ -26,11 +26,21 @@ export function parseBundleIdentity(xml) {
   return identity;
 }
 
-export async function verifyCandidate({ artifactDir, sourceSha, buildRunId, expectedBuildWorkflowSha, expectedRunAttempt, expectedVersionCode, expectedVersionName, bundletoolJar }) {
+export function inspectBundle(aabPath, bundletoolJar) {
+  const entries = execFileSync('jar', ['tf', aabPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+    .split(/\r?\n/).filter(Boolean);
+  const hasRequiredStructure = entries.includes('BundleConfig.pb') && entries.includes('base/manifest/AndroidManifest.xml');
+  const hasSignature = entries.some((entry) => SIGNATURE_ENTRY.test(entry));
+  execFileSync('java', ['-jar', bundletoolJar, 'validate', `--bundle=${aabPath}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+  const xml = execFileSync('java', ['-jar', bundletoolJar, 'dump', 'manifest', `--bundle=${aabPath}`, '--module=base'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  return { hasRequiredStructure, hasSignature, identity: parseBundleIdentity(xml) };
+}
+
+export async function verifyCandidate({ artifactDir, sourceSha, buildRunId, expectedBuildRunHeadSha, expectedRunAttempt, expectedVersionCode, expectedVersionName, bundletoolJar, inspect = inspectBundle }) {
   assert.match(sourceSha, /^[0-9a-f]{40}$/);
   assert.match(String(buildRunId), /^[0-9]+$/);
-  assert.match(expectedBuildWorkflowSha, /^[0-9a-f]{40}$/);
-  assert.match(String(expectedRunAttempt), /^[0-9]+$/);
+  assert.match(expectedBuildRunHeadSha, /^[0-9a-f]{40}$/);
+  assert.match(String(expectedRunAttempt), /^[1-9]\d{0,5}$/);
   const root = resolve(artifactDir);
   const names = await readdir(root);
   if (names.length !== 3 || !names.includes('manifest.json') || !names.includes('aab.sha256')) {
@@ -41,8 +51,8 @@ export async function verifyCandidate({ artifactDir, sourceSha, buildRunId, expe
   if (metadata.sourceSha !== sourceSha || String(metadata.buildRunId) !== String(buildRunId)) {
     throw new Error('Candidate provenance does not match the requested source and build run.');
   }
-  if (metadata.buildWorkflowSha !== expectedBuildWorkflowSha || String(metadata.buildRunAttempt) !== String(expectedRunAttempt)) {
-    throw new Error('Candidate was produced by a different workflow commit or run attempt.');
+  if (metadata.buildWorkflowSha !== expectedBuildRunHeadSha || String(metadata.buildRunAttempt) !== String(expectedRunAttempt)) {
+    throw new Error('Candidate was produced by a different build-run head commit or run attempt.');
   }
   if (metadata.buildWorkflow !== '.github/workflows/courier-unsigned-release-candidate.yml') {
     throw new Error('Candidate was not produced by the approved Courier build workflow.');
@@ -66,32 +76,29 @@ export async function verifyCandidate({ artifactDir, sourceSha, buildRunId, expe
   const sidecar = (await readFile(join(root, 'aab.sha256'), 'utf8')).trim();
   if (sidecar !== `${digest}  ${metadata.aab}`) throw new Error('AAB SHA-256 differs from its sidecar.');
 
-  const entries = execFileSync('jar', ['tf', aabPath], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
-    .split(/\r?\n/).filter(Boolean);
-  if (entries.some((entry) => SIGNATURE_ENTRY.test(entry))) throw new Error('Candidate must be unsigned before the protected signing stage.');
-  if (!entries.includes('BundleConfig.pb') || !entries.includes('base/manifest/AndroidManifest.xml')) {
+  const inspected = inspect(aabPath, bundletoolJar);
+  if (inspected.hasSignature) throw new Error('Candidate must be unsigned before the protected signing stage.');
+  if (!inspected.hasRequiredStructure) {
     throw new Error('Candidate is missing required Android App Bundle entries.');
   }
 
-  execFileSync('java', ['-jar', bundletoolJar, 'validate', `--bundle=${aabPath}`], { stdio: ['ignore', 'pipe', 'pipe'] });
-  const xml = execFileSync('java', ['-jar', bundletoolJar, 'dump', 'manifest', `--bundle=${aabPath}`, '--module=base'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-  const actual = parseBundleIdentity(xml);
-  if (actual.versionCode !== expectedVersionCode || actual.versionName !== expectedVersionName) {
+  const actual = inspected.identity;
+  if (actual.packageName !== EXPECTED_PACKAGE || actual.versionCode !== expectedVersionCode || actual.versionName !== expectedVersionName) {
     throw new Error('AAB manifest version differs from the approved source metadata.');
   }
   return { ...actual, sha256: digest, aab: metadata.aab, sourceSha, buildRunId: String(buildRunId) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
-  const [artifactDir, sourceSha, buildRunId, buildWorkflowSha, runAttempt, expectedCode, expectedName, bundletoolJar] = process.argv.slice(2);
-  if (![artifactDir, sourceSha, buildRunId, buildWorkflowSha, runAttempt, expectedCode, expectedName, bundletoolJar].every(Boolean)) {
-    throw new Error('Usage: verify-courier-unsigned-candidate.mjs <dir> <source-sha> <build-run-id> <build-workflow-sha> <run-attempt> <version-code> <version-name> <bundletool-jar>');
+  const [artifactDir, sourceSha, buildRunId, buildRunHeadSha, runAttempt, expectedCode, expectedName, bundletoolJar] = process.argv.slice(2);
+  if (![artifactDir, sourceSha, buildRunId, buildRunHeadSha, runAttempt, expectedCode, expectedName, bundletoolJar].every(Boolean)) {
+    throw new Error('Usage: verify-courier-unsigned-candidate.mjs <dir> <source-sha> <build-run-id> <build-run-head-sha> <run-attempt> <version-code> <version-name> <bundletool-jar>');
   }
   const result = await verifyCandidate({
     artifactDir,
     sourceSha,
     buildRunId,
-    expectedBuildWorkflowSha: buildWorkflowSha,
+    expectedBuildRunHeadSha: buildRunHeadSha,
     expectedRunAttempt: runAttempt,
     expectedVersionCode: Number(expectedCode),
     expectedVersionName: expectedName,

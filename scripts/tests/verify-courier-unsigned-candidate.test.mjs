@@ -13,7 +13,7 @@ async function fixture(overrides = {}) {
   await writeFile(join(dir, 'candidate.aab'), bytes);
   await writeFile(join(dir, 'aab.sha256'), `${digest}  candidate.aab\n`);
   await writeFile(join(dir, 'manifest.json'), JSON.stringify({
-    sourceSha: 'a'.repeat(40), buildRunId: '1234', buildWorkflowSha: 'c'.repeat(40), buildRunAttempt: '1',
+    sourceSha: 'a'.repeat(40), buildRunId: '1234', buildWorkflowSha: 'a'.repeat(40), buildRunAttempt: '1',
     buildWorkflow: '.github/workflows/courier-unsigned-release-candidate.yml',
     packageName: 'com.linago.courier', versionCode: 59, versionName: '1.0.2',
     aab: 'candidate.aab', aabSha256: digest, signed: false,
@@ -22,7 +22,18 @@ async function fixture(overrides = {}) {
   return dir;
 }
 
-const params = (dir, overrides = {}) => ({ artifactDir: dir, sourceSha: 'a'.repeat(40), buildRunId: '1234', expectedBuildWorkflowSha: 'c'.repeat(40), expectedRunAttempt: '1', expectedVersionCode: 59, expectedVersionName: '1.0.2', bundletoolJar: 'unused', ...overrides });
+const fakeInspect = (aabPath) => ({ hasRequiredStructure: true, hasSignature: false, identity: { packageName: 'com.linago.courier', versionCode: 59, versionName: '1.0.2' } });
+const params = (dir, overrides = {}) => ({ artifactDir: dir, sourceSha: 'a'.repeat(40), buildRunId: '1234', expectedBuildRunHeadSha: 'a'.repeat(40), expectedRunAttempt: '1', expectedVersionCode: 59, expectedVersionName: '1.0.2', bundletoolJar: 'unused', inspect: fakeInspect, ...overrides });
+
+test('accepts a fully verified candidate fixture with independently inspected AAB identity', async () => {
+  const dir = await fixture();
+  try {
+    const verified = await verifyCandidate(params(dir));
+    assert.equal(verified.packageName, 'com.linago.courier');
+    assert.equal(verified.versionCode, 59);
+    assert.equal(verified.buildRunId, '1234');
+  } finally { await rm(dir, { recursive: true, force: true }); }
+});
 
 test('rejects a different source commit before inspecting a bundle', async () => {
   const dir = await fixture();
@@ -37,10 +48,10 @@ test('rejects a different build run before inspecting a bundle', async () => {
 });
 
 test('rejects a different workflow commit or run attempt', async (t) => {
-  for (const overrides of [{ expectedBuildWorkflowSha: 'd'.repeat(40) }, { expectedRunAttempt: '2' }]) {
+  for (const overrides of [{ expectedBuildRunHeadSha: 'd'.repeat(40) }, { expectedRunAttempt: '2' }]) {
     await t.test('provenance mismatch', async () => {
       const dir = await fixture();
-      try { await assert.rejects(verifyCandidate(params(dir, overrides)), /workflow commit or run attempt/); }
+      try { await assert.rejects(verifyCandidate(params(dir, overrides)), /build-run head commit or run attempt/); }
       finally { await rm(dir, { recursive: true, force: true }); }
     });
   }
@@ -55,6 +66,19 @@ test('rejects a package, version, and signed-state mismatch', async (t) => {
     await t.test(label, async () => {
       const dir = await fixture(override);
       try { await assert.rejects(verifyCandidate(params(dir)), expected); }
+      finally { await rm(dir, { recursive: true, force: true }); }
+    });
+  }
+});
+
+test('rejects unexpected package/version in the independently inspected AAB', async (t) => {
+  for (const inspected of [
+    { hasRequiredStructure: true, hasSignature: false, identity: { packageName: 'com.other.app', versionCode: 59, versionName: '1.0.2' } },
+    { hasRequiredStructure: true, hasSignature: false, identity: { packageName: 'com.linago.courier', versionCode: 58, versionName: '1.0.1' } },
+  ]) {
+    await t.test('actual AAB identity differs', async () => {
+      const dir = await fixture();
+      try { await assert.rejects(verifyCandidate(params(dir, { inspect: () => inspected })), /differs from the approved source metadata/); }
       finally { await rm(dir, { recursive: true, force: true }); }
     });
   }
