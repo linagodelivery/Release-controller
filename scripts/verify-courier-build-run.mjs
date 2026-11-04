@@ -49,8 +49,7 @@ export function verifyBuildExecution({ run, attempt, workflow, workflowSha256, s
   if (!/^[0-9a-f]{40}$/.test(run.head_sha ?? '') || run.head_sha !== sourceSha || attempt.head_sha !== run.head_sha) {
     throw new Error('Selected source SHA must exactly match the successful build run head SHA.');
   }
-  const [runPath, runRef, ...extraRunPathParts] = String(run.path ?? '').split('@');
-  if (runPath !== policy.workflowPath || !['main', 'refs/heads/main'].includes(runRef) || extraRunPathParts.length !== 0 ||
+  if (run.path !== policy.workflowPath ||
       workflow?.path !== policy.workflowPath || Number(workflow?.id) !== Number(run.workflow_id) || workflow?.state !== 'active') {
     throw new Error('GitHub run and workflow metadata do not identify the approved build workflow.');
   }
