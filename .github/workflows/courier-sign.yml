@@ -62,7 +62,11 @@ jobs:
         run: |
           set -euo pipefail
           result="$(node release-controller/scripts/verify-courier-build-run.mjs "$SOURCE_SHA" "$BUILD_RUN_ID" "$BUILD_RUN_ATTEMPT")"
-          RESULT="$result" node --input-type=module -e 'import { appendFile } from "node:fs/promises"; const result = JSON.parse(process.env.RESULT); await appendFile(process.env.GITHUB_OUTPUT, `version_code=${result.versionCode}\nversion_name=${result.versionName}\nartifact_id=${result.artifactId}\nartifact_digest=${result.artifactDigest}\nbuild_run_head_sha=${result.runHeadSha}\nbuild_run_attempt=${result.runAttempt}\n`);'
+          RESULT="$result" node --input-type=module <<'NODE'
+          import { appendFile } from "node:fs/promises";
+          const result = JSON.parse(process.env.RESULT);
+          await appendFile(process.env.GITHUB_OUTPUT, `version_code=${result.versionCode}\nversion_name=${result.versionName}\nartifact_id=${result.artifactId}\nartifact_digest=${result.artifactDigest}\nbuild_run_head_sha=${result.runHeadSha}\nbuild_run_attempt=${result.runAttempt}\n`);
+          NODE
           echo 'Approved workflow definition, exact source/run identity, attempt, artifact record, package, and version verified.'
 
       - name: Download only the verified private-run candidate
