@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
-import { verifyBuildExecution, parseCourierGradleIdentity } from '../verify-courier-build-run.mjs';
+import { verifyBuildExecution, parseCourierGradleIdentity, verifyCurrentMainSource } from '../verify-courier-build-run.mjs';
 
 const policy = JSON.parse(await readFile(new URL('../courier-build-workflow-policy.json', import.meta.url), 'utf8'));
 const sha = 'a03b6eaba920ec3b930cc2e2d3a17030040c7d48';
@@ -116,4 +116,11 @@ test('rejects ambiguous Gradle application/version declarations', () => {
   assert.deepEqual(parseCourierGradleIdentity(valid), { applicationId: 'com.linago.courier', versionCode: 59, versionName: '1.0.2' });
   assert.throws(() => parseCourierGradleIdentity(`${valid}versionCode = 60\n`), /exactly one versionCode/);
   assert.throws(() => parseCourierGradleIdentity(valid.replace('com.linago.courier', 'com.other.app')), /invalid Courier application/);
+});
+
+test('requires the selected source to remain the current Delivery main commit', () => {
+  const currentSha = 'a'.repeat(40);
+  assert.equal(verifyCurrentMainSource(currentSha, currentSha), true);
+  assert.throws(() => verifyCurrentMainSource(currentSha, 'b'.repeat(40)), /current main commit/);
+  assert.throws(() => verifyCurrentMainSource('invalid', currentSha), /current main commit/);
 });

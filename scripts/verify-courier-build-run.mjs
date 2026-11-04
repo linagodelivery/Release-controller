@@ -28,6 +28,13 @@ export function parseCourierGradleIdentity(contents) {
   return { applicationId, versionCode, versionName };
 }
 
+export function verifyCurrentMainSource(sourceSha, mainCommitSha) {
+  if (!/^[0-9a-f]{40}$/.test(sourceSha ?? '') || !/^[0-9a-f]{40}$/.test(mainCommitSha ?? '') || sourceSha !== mainCommitSha) {
+    throw new Error('Selected Delivery source must be the current main commit; rebuild the candidate after main advances.');
+  }
+  return true;
+}
+
 export function verifyBuildExecution({ run, attempt, workflow, workflowSha256, sourceSha, requestedAttempt, artifacts, policy }) {
   assert.match(sourceSha ?? '', /^[0-9a-f]{40}$/);
   assert.match(String(requestedAttempt ?? ''), /^[1-9]\d{0,5}$/);
@@ -107,8 +114,12 @@ async function main() {
   }
   const result = verifyBuildExecution({ run, attempt, workflow, workflowSha256, sourceSha, requestedAttempt: runAttempt, artifacts: artifactResponse.artifacts, policy });
 
-  const compare = await api(`/repos/${OWNER}/${REPOSITORY}/compare/${sourceSha}...main`);
+  const [compare, mainCommit] = await Promise.all([
+    api(`/repos/${OWNER}/${REPOSITORY}/compare/${sourceSha}...main`),
+    api(`/repos/${OWNER}/${REPOSITORY}/commits/main`),
+  ]);
   if (compare.merge_base_commit?.sha !== sourceSha) throw new Error('Selected source is no longer an ancestor of Delivery main.');
+  verifyCurrentMainSource(sourceSha, mainCommit.sha);
   const gradle = await api(`/repos/${OWNER}/${REPOSITORY}/contents/android/app/build.gradle.kts?ref=${sourceSha}`);
   if (gradle.type !== 'file' || gradle.encoding !== 'base64') throw new Error('Selected Courier Gradle configuration is unavailable.');
   const identity = parseCourierGradleIdentity(Buffer.from(gradle.content, 'base64').toString('utf8'));
