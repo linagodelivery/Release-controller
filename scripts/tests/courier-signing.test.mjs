@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createHash, X509Certificate } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,14 +61,17 @@ async function signingFixture(t) {
   await mkdir(secretDir);
   const storePasswordPath = join(secretDir, 'store-password');
   const keyPasswordPath = join(secretDir, 'key-password');
-  await writeFile(storePasswordPath, 'dummy-test-only-password');
-  await writeFile(keyPasswordPath, 'dummy-test-only-password');
+  await writeFile(storePasswordPath, 'dummy-test-only-password', { mode: 0o600 });
+  await writeFile(keyPasswordPath, 'dummy-test-only-password', { mode: 0o600 });
   const keystorePath = join(secretDir, 'dummy.p12');
   execFileSync('keytool', [
     '-genkeypair', '-alias', 'linago-courier-upload', '-keyalg', 'RSA', '-keysize', '2048', '-validity', '2',
     '-storetype', 'PKCS12', '-keystore', keystorePath, '-storepass:file', storePasswordPath,
     '-keypass:file', keyPasswordPath, '-dname', 'CN=Dummy Courier Test Certificate',
   ], { stdio: 'ignore' });
+  // keytool creates files according to the caller's umask; normalize the
+  // synthetic credential fixture to owner-only permissions for Linux tests.
+  if (process.platform !== 'win32') await chmod(keystorePath, 0o600);
   const pem = execFileSync('keytool', [
     '-exportcert', '-rfc', '-alias', 'linago-courier-upload', '-keystore', keystorePath,
     '-storetype', 'PKCS12', '-storepass:file', storePasswordPath,
@@ -106,6 +109,7 @@ test('rejects incorrect expected certificate and removes partial signed output',
 test('rejects wrong password without leaving a signed artifact', async (t) => {
   const fixture = await signingFixture(t);
   await writeFile(fixture.storePasswordPath, 'wrong-dummy-password');
+  if (process.platform !== 'win32') await chmod(fixture.storePasswordPath, 0o600);
   await assert.rejects(signAndVerifyCourierBundle(fixture.base), /jarsigner failed/);
   await assert.rejects(readFile(fixture.outputPath), { code: 'ENOENT' });
 });
@@ -185,7 +189,7 @@ test('workflow pins all three Secret Manager versions and has no publishing/depl
   assert.ok(!/play (?:upload|publish)|firebase deploy|upload-artifact@/i.test(workflow));
   assert.ok(workflow.includes('environment: courier-sign'));
   assert.ok(workflow.includes('id-token: write'));
-  assert.ok(workflow.includes("java-version: '21.0.13.0.2+1'"));
+  assert.ok(workflow.includes("java-version: '21.0.13+9'"));
   assert.ok(workflow.includes('if: always()'));
   assert.ok(workflow.includes('"$RUNNER_TEMP/courier-signing"'));
   assert.ok(workflow.indexOf('Validate unsigned AAB before requesting Google credentials') < workflow.indexOf('Authenticate to the existing Courier WIF identity'));
