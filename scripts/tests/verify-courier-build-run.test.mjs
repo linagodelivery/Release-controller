@@ -62,6 +62,7 @@ test('accepts only a successful candidate matching the approved workflow, exact 
 test('rejects an unapproved historical workflow even when its commit is on main', () => {
   assert.throws(() => verifyBuildExecution(fixture({ workflowSha256: 'c'.repeat(64) })), /approved digest/);
   assert.throws(() => verifyBuildExecution(fixture({ workflowSha256: null })), /approved digest/);
+  assert.throws(() => verifyBuildExecution(fixture({ workflowSha256: '67cf78c2caec89db3fbf37240b0917322d67c0e1d284343720d87b3f1873a54e' })), /approved digest/);
 });
 
 test('rejects a mismatched workflow definition and workflow identity', () => {
