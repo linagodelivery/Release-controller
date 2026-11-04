@@ -1,0 +1,79 @@
+name: Courier signing Linux validation
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  courier-linux-validation:
+    name: Validate Courier signing tests on Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out pull request source
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+
+      - name: Set up Temurin JDK 21
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21.0.13+9'
+
+      - name: Verify toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --version
+          java -version
+          java -version 2>&1 | grep -F 'Temurin-21.0.13+9'
+          command -v keytool
+          command -v jar
+          command -v jarsigner
+          keytool -J-version
+          jar --version
+
+      - name: Run controller Node.js tests with standard umask
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 0022
+          test "$(umask)" = '0022'
+          node --test scripts/tests/*.test.mjs
+
+      - name: Check JavaScript syntax
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in \
+            scripts/verify-courier-build-run.mjs \
+            scripts/verify-courier-unsigned-candidate.mjs \
+            scripts/sign-courier-aab.mjs \
+            scripts/upload-courier-signed-aab.mjs \
+            scripts/tests/*.test.mjs; do
+            node --check "$file"
+          done
+
+      - name: Install pinned actionlint
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin"
+          GOBIN="$RUNNER_TEMP/bin" go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      - name: Lint controller workflows
+        run: actionlint .github/workflows/courier-sign.yml .github/workflows/environment-approval-smoke.yml .github/workflows/courier-linux-validation.yml
+
+      - name: Check patch whitespace
+        run: git diff --check

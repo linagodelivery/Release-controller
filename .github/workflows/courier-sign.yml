@@ -1,4 +1,4 @@
-name: Courier signing boundary preflight
+name: Sign verified Courier AAB
 
 on:
   workflow_dispatch:
@@ -24,7 +24,7 @@ concurrency:
 
 jobs:
   signing-boundary-preflight:
-    name: Verify private Courier candidate and WIF boundary (no signing)
+    name: Verify, sign, and privately store approved Courier candidate
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     environment: courier-sign
@@ -62,7 +62,11 @@ jobs:
         run: |
           set -euo pipefail
           result="$(node release-controller/scripts/verify-courier-build-run.mjs "$SOURCE_SHA" "$BUILD_RUN_ID" "$BUILD_RUN_ATTEMPT")"
-          RESULT="$result" node --input-type=module -e 'import { appendFile } from "node:fs/promises"; const result = JSON.parse(process.env.RESULT); await appendFile(process.env.GITHUB_OUTPUT, `version_code=${result.versionCode}\nversion_name=${result.versionName}\nartifact_id=${result.artifactId}\nartifact_digest=${result.artifactDigest}\nbuild_run_head_sha=${result.runHeadSha}\nbuild_run_attempt=${result.runAttempt}\n`);'
+          RESULT="$result" node --input-type=module <<'NODE'
+          import { appendFile } from "node:fs/promises";
+          const result = JSON.parse(process.env.RESULT);
+          await appendFile(process.env.GITHUB_OUTPUT, `version_code=${result.versionCode}\nversion_name=${result.versionName}\nartifact_id=${result.artifactId}\nartifact_digest=${result.artifactDigest}\nbuild_run_head_sha=${result.runHeadSha}\nbuild_run_attempt=${result.runAttempt}\n`);
+          NODE
           echo 'Approved workflow definition, exact source/run identity, attempt, artifact record, package, and version verified.'
 
       - name: Download only the verified private-run candidate
@@ -79,7 +83,7 @@ jobs:
         uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '21.0.13+9'
 
       - name: Download and pin Bundletool
         shell: bash
@@ -131,23 +135,77 @@ jobs:
           project_id: deliveryapp-2b7a4
           version: '515.0.0'
 
-      - name: Complete signing-boundary dry run without retrieving secrets
+      - name: Retrieve pinned Courier signing secret versions
         shell: bash
-        env:
-          SOURCE_SHA: ${{ inputs.source_sha }}
-          BUILD_RUN_ID: ${{ inputs.build_run_id }}
         run: |
           set -euo pipefail
-          gcloud auth print-access-token >/dev/null
           actual="$(gcloud auth list --filter=status:ACTIVE --format='value(account)')"
           expected='gha-courier-sign@deliveryapp-2b7a4.iam.gserviceaccount.com'
           if [[ "$actual" != "$expected" ]]; then
             echo 'Unexpected Google Cloud principal.' >&2
             exit 1
           fi
-          echo "Preflight passed for source ${SOURCE_SHA} and build run ${BUILD_RUN_ID}; no signing operation or Secret Manager read was performed."
+          secret_dir="$RUNNER_TEMP/courier-signing"
+          umask 077
+          mkdir -m 700 "$secret_dir"
+          retrieve_secret() {
+            local secret_name="$1"
+            local destination="$2"
+            if ! gcloud secrets versions access 1 \
+              --secret="$secret_name" \
+              --project=deliveryapp-2b7a4 \
+              --out-file="$destination" >/dev/null 2>&1; then
+              echo "Unable to retrieve pinned Secret Manager version for ${secret_name}." >&2
+              return 1
+            fi
+            chmod 600 "$destination"
+            if [[ ! -s "$destination" ]]; then
+              echo "Pinned Secret Manager version for ${secret_name} is empty." >&2
+              return 1
+            fi
+          }
+          retrieve_secret courier-signing-keystore "$secret_dir/keystore.p12"
+          retrieve_secret courier-signing-store-password "$secret_dir/store-password"
+          retrieve_secret courier-signing-key-password "$secret_dir/key-password"
+          echo 'Retrieved only the three pinned Courier signing secret versions.'
+
+      - name: Sign and verify the approved AAB
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          BUILD_RUN_ATTEMPT: ${{ inputs.build_run_attempt }}
+          EXPECTED_VERSION_CODE: ${{ steps.source.outputs.version_code }}
+          EXPECTED_VERSION_NAME: ${{ steps.source.outputs.version_name }}
+        run: |
+          set -euo pipefail
+          node release-controller/scripts/sign-courier-aab.mjs \
+            "$RUNNER_TEMP/courier-candidate" \
+            "$RUNNER_TEMP/courier-candidate-verification.json" \
+            "$RUNNER_TEMP/courier-signed.aab" \
+            "$RUNNER_TEMP/courier-signing/keystore.p12" \
+            "$RUNNER_TEMP/courier-signing/store-password" \
+            "$RUNNER_TEMP/courier-signing/key-password" \
+            "$RUNNER_TEMP/bundletool-all-1.18.3.jar" \
+            "$SOURCE_SHA" "$BUILD_RUN_ID" "$BUILD_RUN_ATTEMPT" \
+            "$EXPECTED_VERSION_CODE" "$EXPECTED_VERSION_NAME" \
+            'E20D66F273699CEF3DD4C21AD51F60AEFD4E93F2142133659EF54C946D15C6BE'
+
+      - name: Store the verified AAB in private Cloud Storage (create only)
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          BUILD_RUN_ID: ${{ inputs.build_run_id }}
+          BUILD_RUN_ATTEMPT: ${{ inputs.build_run_attempt }}
+          EXPECTED_VERSION_CODE: ${{ steps.source.outputs.version_code }}
+        run: |
+          set -euo pipefail
+          node release-controller/scripts/upload-courier-signed-aab.mjs \
+            "$RUNNER_TEMP/courier-signed.aab" \
+            "$SOURCE_SHA" "$BUILD_RUN_ID" "$BUILD_RUN_ATTEMPT" "$EXPECTED_VERSION_CODE" \
+            'linago-courier-releases'
 
       - name: Remove candidate and temporary tool files
         if: always()
         shell: bash
-        run: rm -rf "$RUNNER_TEMP/courier-candidate" "$RUNNER_TEMP/courier-candidate-verification.json" "$RUNNER_TEMP/bundletool-all-1.18.3.jar"
+        run: rm -rf "$RUNNER_TEMP/courier-candidate" "$RUNNER_TEMP/courier-candidate-verification.json" "$RUNNER_TEMP/bundletool-all-1.18.3.jar" "$RUNNER_TEMP/courier-signing" "$RUNNER_TEMP/courier-signed.aab"

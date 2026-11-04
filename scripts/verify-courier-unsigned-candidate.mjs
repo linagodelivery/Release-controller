@@ -86,7 +86,7 @@ export async function verifyCandidate({ artifactDir, sourceSha, buildRunId, expe
   if (actual.packageName !== EXPECTED_PACKAGE || actual.versionCode !== expectedVersionCode || actual.versionName !== expectedVersionName) {
     throw new Error('AAB manifest version differs from the approved source metadata.');
   }
-  return { ...actual, sha256: digest, aab: metadata.aab, sourceSha, buildRunId: String(buildRunId) };
+  return { ...actual, sha256: digest, aab: metadata.aab, sourceSha, buildRunId: String(buildRunId), buildRunAttempt: String(expectedRunAttempt) };
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === resolve(fileURLToPath(import.meta.url))) {
